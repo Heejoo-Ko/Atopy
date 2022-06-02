@@ -43,7 +43,7 @@ out.label <- mk.lev(out)
 
 out.label[variable == "season", ":="(val_label = c("Spring", "Summer", "Autumn", "Winter"))]
 out.label[variable == "dow", ":="(val_label = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))]
-out.label[variable == "income", ":="(val_label = c("100", "100~300", "300~500", "500"))]
+out.label[variable == "income", ":="(val_label = c("less than 1 million won", "1~3 million won", "3~5 million won", "more than 5 million won"))]
 out.label[variable == "house_type", ":="(val_label = c("Multi Complex House", "Apartment", "Mixed-use Apartment Building", "Commercial Building", "Other"))]
 out.label[variable == "vent_sm", ":="(val_label = c("Almost never", "<1 time per week", "1 time per week", "2~3 times per week", "4~6 times per week", "Everyday"))]
 out.label[variable == "vent_win", ":="(val_label = c("Almost never", "<1 time per week", "1 time per week", "2~3 times per week", "4~6 times per week", "Everyday"))]

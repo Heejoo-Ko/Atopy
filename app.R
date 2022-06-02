@@ -107,7 +107,7 @@ ui <- navbarPage("Atopy",
                                           tabPanel("Result",
                                                    verbatimTextOutput("res_ml")),
                                           tabPanel("Plot", 
-                                                   radioButtons("plottype_ml", "Plot", c("ROC", "VarImp"), "ROC", inline = T),
+                                                   radioButtons("plottype_ml", "Plot", c("ROC", "VarImp"), "VarImp", inline = T),
                                                    withLoader(plotOutput("fig1"), type="html", loader="loader6"),
                                                    h3("Download options"),
                                                    wellPanel(
@@ -133,6 +133,22 @@ ui <- navbarPage("Atopy",
 server <- function(input, output, session) {
   
   ## check_credentials returns a function to authenticate users
+  
+  observe({
+    id <- input$ID_pred
+  
+    id_N <- out[ID==id,.N,]
+    
+    # NA 15% 미만인 변수만 독립변수에 포함
+    tf<-data.frame(TF = t(out[ID==id,lapply(.SD, function(x){sum(is.na(x))/id_N < 0.15}), .SDcols = unlist(varlist[3:4])]))
+    indep_pred_choices <- rownames(filter(tf,TF==TRUE))
+    
+    updateSelectInput(session, "Indep_pred",
+                      choices = indep_pred_choices,
+                      selected = setdiff(indep_pred_choices, c("season", "dow", "bath", "lotion"))
+    )
+  })
+  
   
   out_tb1 <- callModule(tb1module2, "tb1", data = reactive(out[, .SD[1], keyby = "ID", .SDcols = varlist$Base]), data_label = reactive(out.label), data_varStruct = NULL, nfactor.limit = nfactor.limit, showAllLevels = F)
   
@@ -191,24 +207,48 @@ server <- function(input, output, session) {
                    }
                    
                    
-                   data <- out[ID==input$ID_pred,,]
-                   data <- na.omit(data)
-                   data$lag<-lag(data[[input$Dep_pred]],1)
+                   data <- out[ID==input$ID_pred, .SD, .SDcols = c("date", input$Indep_pred, input$Dep_pred)]
+                   data$lag <- sapply(data$date, function(x){
+                     dd <- as.character(data[date == (x-1)][[input$Dep_pred]])
+                     return(ifelse(length(dd) == 0, NA, dd))})
+                   
+                   if(is.numeric(data[[input$Dep_pred]])){
+                     data$lag <- as.numeric(data$lag)
+                   }
+                   
+                   
+                   
+                   ###############
+                   # data <- out[ID==49, .SD, .SDcols = c("date", "drug", "HCHO_in", "CO2_in", "temp_in", "sum_score")]
+                   # data$lag <- sapply(data$date, function(x){
+                   #   dd <- as.character(data[date == (x-1)][["sum_score"]])
+                   #   return(ifelse(length(dd) == 0, NA, dd))})
+                   # 
+                   # if(is.numeric(data[["sum_score"]])){
+                   #   data$lag <- as.numeric(data$lag)
+                   # }
+                   # ####
+                   
+                   
                    data <- na.omit(data)
                    
-                   # # #################
-                   # data <- out[ID==49,,]
-                   # data <- na.omit(data)
-                   # data$lag<-lag(data$symptom,1)
-                   # data <- na.omit(data)
-
-                   data<-data[,.SD,.SDcols = -c(varlist$Base,"ID")]
-
+                   factor_now <- is.factor(data[[input$Dep_pred]])
+                   
+                   dep_mean <- 0
+                   dep_sd <- 1
+                   
                    if(input$method_ml=="LASSO"){
                      
                      factor_vars_now<-factor_vars
-                     if(is.factor(data[[input$Dep_pred]])){
+                     if(factor_now){
                        factor_vars_now<-c(factor_vars_now,"lag")
+                     }
+                     
+                     if(!factor_now){
+                       dep_mean <- mean(data[[input$Dep_pred]],na.rm=T)
+                       dep_sd <- sd(data[[input$Dep_pred]],na.rm=T)  
+                       # dep_mean <- mean(data[["sum_score"]],na.rm=T)
+                       # dep_sd <- sd(data[["sum_score"]],na.rm=T)
                      }
                      
                      for (v in setdiff(names(data), factor_vars_now)){
@@ -223,14 +263,14 @@ server <- function(input, output, session) {
                    
                    # data.train <- DMwR::SMOTE(as.formula(paste(input$Dep_pred, "~ .")), data = data.train)
                    
-                   factor_now <- is.factor(data[[input$Dep_pred]])
+                   
                    
                    if(factor_now){
                      fitControl <- trainControl(method = "cv", number = 10,
                                                 summaryFunction = MySummary, savePredictions=TRUE, classProbs=TRUE)  
                    }else{
                      fitControl <- trainControl(method = "cv", number = 10,
-                                                summaryFunction = defaultSummary, savePredictions=TRUE, classProbs=TRUE)
+                                                summaryFunction = defaultSummary, savePredictions=TRUE, classProbs=FALSE)
                    }
                    
                    
@@ -242,25 +282,30 @@ server <- function(input, output, session) {
                    rf1 <- train(as.formula(paste0(input$Dep_pred, " ~", paste(input$Indep_pred, collapse = "+"),"+ lag+ date")), data = data.train, method = method,
                                 trControl = fitControl, tuneGrid = tunegrid)
                    
-                   # if(is.factor(data[[input$Dep_pred]])){
-                   #   pred <- data.frame("Obs" = data.test[[input$Dep_pred]], "Pred" = predict(rf1, data.test, type = "prob")[, 2])
-                   # }else{
-                   pred <- data.frame("Obs" = data.test[[input$Dep_pred]], "Pred" = predict(rf1, data.test))
-                   # } #
+                   if(factor_now){
+                     pred <- data.frame("Obs" = data[[input$Dep_pred]], "Pred" = predict(rf1, data, type = "prob")[, 2])
+                   }else{
+                     pred <- data.frame("Obs" = data[[input$Dep_pred]], "Pred" = predict(rf1, data))
+                     if(input$method_ml == "LASSO"){
+                       pred$Pred <- (pred$Pred * dep_sd) + dep_mean
+                     }
+                     
+                   }
                    
-                   # # # # # #####
+                   
+                   # # # # # # # #####
                    # method<-"rf"
                    # method<-"glmnet"
-                   # rf1 <- train(as.formula(paste0("sum_objective", " ~", "drug+HCHO_in+temp_in+lag+date")), data = data.train, method = method,
+                   # rf1 <- train(as.formula(paste0("sum_score", " ~", "drug+HCHO_in+CO2_in+temp_in+lag+date")), data = data.train, method = method,
                    #              trControl = fitControl, tuneGrid = tunegrid)
-                   # pred <- data.frame("Obs" = data.test[["sum_objective"]], "Pred" = predict(rf1, newdata =  data.test))
-                   # confusionMatrix(pred$Obs, predict(rf1, data.test))
-                   # pred$Obs %>% class
-                   # data.test$sum_objective %>% class
-                   # predict(rf1, data.test) %>% class
+                   # pred <- data.frame("Obs" = data[["sum_score"]], "Pred" = predict(rf1, newdata =  data))
+                   # 
+                   # #################
+                   
+                   
 
                    if(factor_now){
-                     my_ml_return<-list(obj = rf1, pred = pred, cmat = confusionMatrix(pred$Obs, predict(rf1, data.test)))
+                     my_ml_return<-list(obj = rf1, pred = pred, cmat = confusionMatrix(pred$Obs, predict(rf1, data)))
                    }else{
                      my_ml_return<-list(obj = rf1, pred = pred, cmat = NULL)
                    }
@@ -272,25 +317,36 @@ server <- function(input, output, session) {
   })
   
   obj.predplot <- reactive({
-    data <- out[ID==input$ID_pred,,]
-    data <- na.omit(data)
-    data$lag<-lag(data[[input$Dep_pred]],1)
+    
+    data <- out[ID==input$ID_pred, .SD, .SDcols = c("date", input$Indep_pred, input$Dep_pred)]
+    data$lag <- sapply(data$date, function(x){
+      dd <- as.character(data[date == (x-1)][[input$Dep_pred]])
+      return(ifelse(length(dd) == 0, NA, dd))})
+    if(is.numeric(data[[input$Dep_pred]])){
+      data$lag <- as.numeric(data$lag)
+    }
     data <- na.omit(data)
     
     cut <- round(nrow(data)*0.7)
     data.train <- data[1:(cut-1),]
     data.test <- data[cut:nrow(data),]
     
-    # yhat<-c(data.train$sum_objective,pred$Pred)
+    # yhat<-pred$Pred
     # res.ml<-data.table(dplyr::bind_cols(date = data$date, yhat = yhat, target = data[["sum_objective"]])) %>%
     #   melt(idvars = "ID", measure.vars = c("yhat", "target"))
     # ggpubr::ggline(res.ml, "date", "value", color = "variable", plot_type  = "l", xlab = "", ylab = "sum_objective") +
     #   geom_vline(xintercept=data.test[1,]$date, linetype='dotted') +
     #   scale_color_discrete(name = "Variable", labels = c("Predict", "sum_objective"))
-    
+
     pred<-obj.ml()$pred
+
+    factor_now <- is.factor(data[[input$Dep_pred]])
+    if(factor_now){
+      yhat <- as.factor(ifelse(pred$Pred >=0.5, "Yes", "No"))
+    }else{
+      yhat<-pred$Pred
+    }
     
-    yhat<-c(data.train[[input$Dep_pred]],pred$Pred)
     res.ml<-data.table(dplyr::bind_cols(date = data$date, yhat = yhat, target = data[[input$Dep_pred]])) %>%
       melt(idvars = "ID", measure.vars = c("yhat", "target"))
     
@@ -373,10 +429,18 @@ server <- function(input, output, session) {
   
   obj.fig1 <- reactive({
     if (input$plottype_ml == "ROC"){
-      obj.roc <- pROC::roc(Obs ~ as.numeric(Pred), data = obj.ml()$pred)
-      p <- pROC::ggroc(obj.roc) + see::theme_modern() + geom_abline(slope = 1, intercept = 1, lty = 2) +
-        xlab("Specificity") + ylab("Sensitivity") + ggtitle(paste("AUC =", round(obj.roc$auc, 3)))
-      return(p)
+      
+      factor_now <- is.factor(out[[input$Dep_pred]])
+      
+      if(factor_now){
+        obj.roc <- pROC::roc(Obs ~ as.numeric(Pred), data = obj.ml()$pred)
+        p <- pROC::ggroc(obj.roc) + see::theme_modern() + geom_abline(slope = 1, intercept = 1, lty = 2) +
+          xlab("Specificity") + ylab("Sensitivity") + ggtitle(paste("AUC =", round(obj.roc$auc, 3)))
+        return(p)  
+      }else{
+        return(NULL)
+      }
+      
     } else{
       ggplot(varImp(obj.ml()$obj, scale = F), width = 0.05) + ggpubr::theme_classic2()
       #plot(varImp(obj.ml()$obj, scale = F))
@@ -438,6 +502,10 @@ server <- function(input, output, session) {
   })
   
   output$fig1 <- renderPlot({
+    validate(
+      need(try(is.factor(out[[input$Dep_pred]]) | input$plottype_ml == "VarImp"), "only for categorical variable")
+    )
+    
     obj.fig1()
   })
   
