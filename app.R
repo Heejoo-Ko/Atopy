@@ -3,7 +3,7 @@ source("global.R")
 source("/home/heejooko/ShinyApps/Atopy/R/gee.R")
 library(shinycustomloader);library(survival);library(MatchIt);library(survey);library(ggplot2);library(shiny)
 library(shinymanager);library(jskm);library(DT);library(jsmodule);library(forestplot);library(tsibble);library(prophet);library(feasts)
-library(caret);library(randomForest);library(MLeval);library(MLmetrics)
+library(caret);library(randomForest);library(MLeval);library(MLmetrics);library(dplyr)
 nfactor.limit <- 21
 
 #setwd("/home/js/ShinyApps/Sev-cardio/MS-registry/Tx_of_moderately_severeMS")
@@ -107,7 +107,7 @@ ui <- navbarPage("Atopy",
                                           tabPanel("Result",
                                                    verbatimTextOutput("res_ml")),
                                           tabPanel("Plot", 
-                                                   radioButtons("plottype_ml", "Plot", c("ROC", "VarImp"), "VarImp", inline = T),
+                                                   radioButtons("plottype_ml", "Plot", c("ROC (train data)", "ROC (test data)", "VarImp"), "VarImp", inline = T),
                                                    withLoader(plotOutput("fig1"), type="html", loader="loader6"),
                                                    h3("Download options"),
                                                    wellPanel(
@@ -142,6 +142,7 @@ server <- function(input, output, session) {
     # NA 15% 미만인 변수만 독립변수에 포함
     tf<-data.frame(TF = t(out[ID==id,lapply(.SD, function(x){sum(is.na(x))/id_N < 0.15}), .SDcols = unlist(varlist[3:4])]))
     indep_pred_choices <- rownames(filter(tf,TF==TRUE))
+    
     
     updateSelectInput(session, "Indep_pred",
                       choices = indep_pred_choices,
@@ -284,8 +285,12 @@ server <- function(input, output, session) {
                    
                    if(factor_now){
                      pred <- data.frame("Obs" = data[[input$Dep_pred]], "Pred" = predict(rf1, data, type = "prob")[, 2])
+                     pred.train <- data.frame("Obs" = data.train[[input$Dep_pred]], "Pred" = predict(rf1, data.train, type = "prob")[, 2])
+                     pred.test <- data.frame("Obs" = data.test[[input$Dep_pred]], "Pred" = predict(rf1, data.test, type = "prob")[, 2])
                    }else{
                      pred <- data.frame("Obs" = data[[input$Dep_pred]], "Pred" = predict(rf1, data))
+                     pred.train <- data.frame("Obs" = data.train[[input$Dep_pred]], "Pred" = predict(rf1, data.train))
+                     pred.test <- data.frame("Obs" = data.test[[input$Dep_pred]], "Pred" = predict(rf1, data.test))
                      if(input$method_ml == "LASSO"){
                        pred$Pred <- (pred$Pred * dep_sd) + dep_mean
                      }
@@ -305,9 +310,9 @@ server <- function(input, output, session) {
                    
 
                    if(factor_now){
-                     my_ml_return<-list(obj = rf1, pred = pred, cmat = confusionMatrix(pred$Obs, predict(rf1, data)))
+                     my_ml_return<-list(obj = rf1, pred = pred, pred.train = pred.train, pred.test = pred.test, cmat.train = confusionMatrix(pred.train$Obs, predict(rf1, data.train)), cmat.test = confusionMatrix(pred.test$Obs, predict(rf1, data.test)))
                    }else{
-                     my_ml_return<-list(obj = rf1, pred = pred, cmat = NULL)
+                     my_ml_return<-list(obj = rf1, pred = pred, pred.train = pred.train, pred.test = pred.test, cmat.train = NULL, cmat.test = NULL)
                    }
                    
                     
@@ -428,12 +433,13 @@ server <- function(input, output, session) {
   })
   
   obj.fig1 <- reactive({
-    if (input$plottype_ml == "ROC"){
+
+    if (input$plottype_ml == "ROC (train data)"){
       
       factor_now <- is.factor(out[[input$Dep_pred]])
       
       if(factor_now){
-        obj.roc <- pROC::roc(Obs ~ as.numeric(Pred), data = obj.ml()$pred)
+        obj.roc <- pROC::roc(Obs ~ as.numeric(Pred), data = obj.ml()$pred.train)
         p <- pROC::ggroc(obj.roc) + see::theme_modern() + geom_abline(slope = 1, intercept = 1, lty = 2) +
           xlab("Specificity") + ylab("Sensitivity") + ggtitle(paste("AUC =", round(obj.roc$auc, 3)))
         return(p)  
@@ -441,7 +447,20 @@ server <- function(input, output, session) {
         return(NULL)
       }
       
-    } else{
+    }else if(input$plottype_ml == "ROC (test data)"){
+      
+      factor_now <- is.factor(out[[input$Dep_pred]])
+      
+      if(factor_now){
+        obj.roc <- pROC::roc(Obs ~ as.numeric(Pred), data = obj.ml()$pred.test)
+        p <- pROC::ggroc(obj.roc) + see::theme_modern() + geom_abline(slope = 1, intercept = 1, lty = 2) +
+          xlab("Specificity") + ylab("Sensitivity") + ggtitle(paste("AUC =", round(obj.roc$auc, 3)))
+        return(p)  
+      }else{
+        return(NULL)
+      }
+      
+    }else{
       ggplot(varImp(obj.ml()$obj, scale = F), width = 0.05) + ggpubr::theme_classic2()
       #plot(varImp(obj.ml()$obj, scale = F))
     }
@@ -453,8 +472,6 @@ server <- function(input, output, session) {
       factor_now <- is.factor(out[[input$Dep_pred]])
       
       if(factor_now){
-        
-        cm<-obj.ml()$cmat
         
         Matt_Coef <- function (conf_matrix)
         {
@@ -471,15 +488,29 @@ server <- function(input, output, session) {
           return(mcc_final)
         }
         
-        cmtable<-data.frame(cbind(t(cm$overall),t(cm$byClass)))[,c("Sensitivity","Specificity","Accuracy","Precision","Pos.Pred.Value","Neg.Pred.Value")]
+        cm<-obj.ml()$cmat.train
+        cmtable.train<-data.frame(cbind(t(cm$overall),t(cm$byClass)))[,c("Sensitivity","Specificity","Accuracy","Precision","Pos.Pred.Value","Neg.Pred.Value")]
         MCCresult<-data.frame(Matt_Coef(cm))
         colnames(MCCresult)<-"MCC"
-        cmtable<-data.frame(cmtable,MCCresult)
+        cmtable.train<-data.frame(cmtable.train,MCCresult)
+        
+        cm<-obj.ml()$cmat.test
+        cmtable.test<-data.frame(cbind(t(cm$overall),t(cm$byClass)))[,c("Sensitivity","Specificity","Accuracy","Precision","Pos.Pred.Value","Neg.Pred.Value")]
+        MCCresult<-data.frame(Matt_Coef(cm))
+        colnames(MCCresult)<-"MCC"
+        cmtable.test<-data.frame(cmtable.test,MCCresult)
+        
+        cmtable <- rbind(cmtable.train, cmtable.test)
+        rownames(cmtable) <- c("Train","Test")
         
         
       }else{
         
-        cmtable<-data.frame(RMSE = RMSE(obj.ml()$pred$Obs,obj.ml()$pred$Pred))
+        cmtable.train<-data.frame(RMSE = RMSE(obj.ml()$pred.train$Obs,obj.ml()$pred.train$Pred))
+        cmtable.test<-data.frame(RMSE = RMSE(obj.ml()$pred.test$Obs,obj.ml()$pred.test$Pred))
+        
+        cmtable <- rbind(cmtable.train, cmtable.test)
+        rownames(cmtable) <- c("Train","Test")
         
       }
       
@@ -489,17 +520,20 @@ server <- function(input, output, session) {
     } else{
       if(input$method_ml=="LASSO"){
         lc<-coef(obj.ml()$obj$finalModel, obj.ml()$obj$bestTune$lambda)[-1,]
-        df<-data.frame(Variable = names(lc), Coefficient = lc)
+        df<-data.frame(Coefficient = lc)
       } else{
         
         lc<-data.frame(varImp(obj.ml()$obj$finalModel, scale = F))
         colnames(lc)<-NULL
-        df<-data.frame(Variable = rownames(lc), Importance = lc)
+        df<-data.frame(Importance = lc)
       }
       
       return(df)
     }
-  })
+    
+  },
+  rownames = TRUE
+  )
   
   output$fig1 <- renderPlot({
     validate(
