@@ -1,15 +1,17 @@
 library(data.table);library(magrittr);library(jstable);library(lubridate);library(forecast);library(readxl)
 
-setwd("/home/heejooko/ShinyApps/Atopy")
+
+setwd("/home/heejooko/ShinyApps/Atopy ML")
 
 a <- read_excel("data 22-05-17.xlsx", 1)
-# a <- read_excel("Green patrol_AD and air pollution for MR_pollen.xlsx", 1)
-# a <- a %>% dplyr::filter(ID %in% c(39,49,92)) %>% as.data.table()
 a <- as.data.table(a)
 a$date <- as_date(a$date)
 
 a$sum_objective <- a$redness + a$dryness + a$oozing + a$edema
 a$sum_subjective <- a$itching + a$nonsleep
+
+setnames(a, old=c("pollen_ln","trees_ln","weeds_ln","grasses_ln"),
+         new=c("pollen_out","trees_out","weeds_out","grasses_out"))
 
 varlist <- list(
   # Symptom = c("symptom", "sum_score", "sum_objective", "sum_subjective", "itching", "nonsleep", "redness", "dryness", "oozing", "edema"),
@@ -72,3 +74,6 @@ out<-out[ID %in% ID.pred,.SD[1:1],key=c('ID','date')]
 
 vars.pred <- c("drug", "HCHO_in", "CO2_in", "CO_in", "temp_in", "RH_in", "PM25_in", "PM25_out",
                "O3_out", "NO2_out", "CO_out", "SO2_out", "temp_out", "RH_out", "pollen_ln", "trees_ln", "weeds_ln", "grasses_ln")
+
+
+

@@ -1,9 +1,10 @@
 options(shiny.sanitize.errors = F)
 source("global.R")
-source("/home/heejooko/ShinyApps/Atopy/R/gee.R")
-library(shinycustomloader);library(survival);library(MatchIt);library(survey);library(ggplot2);library(shiny)
+source("R/gee.R")
+library(shiny)
+library(shinycustomloader);library(survival);library(MatchIt);library(survey);library(ggplot2)
 library(shinymanager);library(jskm);library(DT);library(jsmodule);library(forestplot);library(tsibble);library(prophet);library(feasts)
-library(caret);library(randomForest);library(MLeval);library(MLmetrics);library(dplyr)
+library(caret);library(randomForest);library(MLeval);library(MLmetrics)
 nfactor.limit <- 21
 
 #setwd("/home/js/ShinyApps/Sev-cardio/MS-registry/Tx_of_moderately_severeMS")
@@ -136,12 +137,12 @@ server <- function(input, output, session) {
   
   observe({
     id <- input$ID_pred
-  
+    
     id_N <- out[ID==id,.N,]
     
-    # NA 15% ¹Ì¸¸ÀÎ º¯¼ö¸¸ µ¶¸³º¯¼ö¿¡ Æ÷ÇÔ
+    # NA 15% ë¯¸ë§Œì¸ ë³€ìˆ˜ë§Œ ë…ë¦½ë³€ìˆ˜ì— í¬í•¨
     tf<-data.frame(TF = t(out[ID==id,lapply(.SD, function(x){sum(is.na(x))/id_N < 0.15}), .SDcols = unlist(varlist[3:4])]))
-    indep_pred_choices <- rownames(filter(tf,TF==TRUE))
+    indep_pred_choices <- rownames(subset(tf,TF==TRUE))
     
     
     updateSelectInput(session, "Indep_pred",
@@ -196,7 +197,7 @@ server <- function(input, output, session) {
     ) %>% formatStyle("sig", target = 'row',backgroundColor = styleEqual("**", 'yellow'))
   })
   
-
+  
   
   
   obj.ml <- eventReactive(input$action_pred, {
@@ -260,10 +261,9 @@ server <- function(input, output, session) {
                    cut <- round(nrow(data)*0.7)
                    data.train <- data[1:(cut-1),]
                    data.test <- data[cut:nrow(data),]
-                  
+                   
                    
                    # data.train <- DMwR::SMOTE(as.formula(paste(input$Dep_pred, "~ .")), data = data.train)
-                   
                    
                    
                    if(factor_now){
@@ -298,7 +298,7 @@ server <- function(input, output, session) {
                    }
                    
                    
-                   # # # # # # # #####
+                   # #####
                    # method<-"rf"
                    # method<-"glmnet"
                    # rf1 <- train(as.formula(paste0("sum_score", " ~", "drug+HCHO_in+CO2_in+temp_in+lag+date")), data = data.train, method = method,
@@ -308,15 +308,15 @@ server <- function(input, output, session) {
                    # #################
                    
                    
-
+                   
                    if(factor_now){
                      my_ml_return<-list(obj = rf1, pred = pred, pred.train = pred.train, pred.test = pred.test, cmat.train = confusionMatrix(pred.train$Obs, predict(rf1, data.train)), cmat.test = confusionMatrix(pred.test$Obs, predict(rf1, data.test)))
                    }else{
                      my_ml_return<-list(obj = rf1, pred = pred, pred.train = pred.train, pred.test = pred.test, cmat.train = NULL, cmat.test = NULL)
                    }
                    
-                    
-                    return(my_ml_return)
+                   
+                   return(my_ml_return)
                  })
     
   })
@@ -342,9 +342,9 @@ server <- function(input, output, session) {
     # ggpubr::ggline(res.ml, "date", "value", color = "variable", plot_type  = "l", xlab = "", ylab = "sum_objective") +
     #   geom_vline(xintercept=data.test[1,]$date, linetype='dotted') +
     #   scale_color_discrete(name = "Variable", labels = c("Predict", "sum_objective"))
-
+    
     pred<-obj.ml()$pred
-
+    
     factor_now <- is.factor(data[[input$Dep_pred]])
     if(factor_now){
       yhat <- as.factor(ifelse(pred$Pred >=0.5, "Yes", "No"))
@@ -422,7 +422,7 @@ server <- function(input, output, session) {
     
     factor_now <- is.factor(out[[input$Dep_pred]])
     my_ml <- obj.ml()
-                            
+    
     if(factor_now){
       my_ml_result<-list("Metrics" = my_ml$cmat, "Result" = my_ml$obj)
     }else{
@@ -433,7 +433,7 @@ server <- function(input, output, session) {
   })
   
   obj.fig1 <- reactive({
-
+    
     if (input$plottype_ml == "ROC (train data)"){
       
       factor_now <- is.factor(out[[input$Dep_pred]])
@@ -515,7 +515,7 @@ server <- function(input, output, session) {
       }
       
       return(cmtable)
-
+      
       
     } else{
       if(input$method_ml=="LASSO"){
@@ -600,7 +600,5 @@ server <- function(input, output, session) {
   })
   
 }
-
-
 
 shinyApp(ui, server)
